@@ -218,17 +218,50 @@ const activityBg: Record<ActivityEntry["type"], string> = {
 };
 
 function ActivitySection({ activity, onAdd }: {
-  activity: ActivityEntry[]; onAdd: (a: ActivityEntry) => void;
+  activity: (ActivityEntry & { operator?: string })[]; 
+  onAdd: (a: ActivityEntry & { operator?: string }) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ date: today(), type: "note", subject: "", description: "", details: "" });
+  
+  // Initializes the form using localStorage if an operator name was previously saved
+  const [form, setForm] = useState({ 
+    date: today(), 
+    type: "note", 
+    subject: "", 
+    description: "", 
+    details: "",
+    operator: typeof window !== "undefined" ? localStorage.getItem("farm_operator_name") || "" : ""
+  });
+  
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ id: uid(), date: form.date, type: form.type as ActivityEntry["type"], subject: form.subject, description: form.description, details: form.details });
+    
+    // Save the operator's name locally to remember them next time
+    if (form.operator.trim()) {
+      localStorage.setItem("farm_operator_name", form.operator.trim());
+    }
+
+onAdd({ 
+  id: uid(), 
+  date: form.date, 
+  type: form.type as ActivityEntry["type"], 
+  subject: form.subject, 
+  description: form.description, 
+  details: form.details,
+  performed_by: form.operator.trim() || "System Operator" // <--- Change 'operator' to 'performed_by'
+});
+    
     setShowModal(false);
-    setForm({ date: today(), type: "note", subject: "", description: "", details: "" });
+    setForm(p => ({ 
+      date: today(), 
+      type: "note", 
+      subject: "", 
+      description: "", 
+      details: "",
+      operator: p.operator // Keeps the operator profile locked in for consecutive additions
+    }));
   };
 
   const sorted = [...activity].sort((a, b) => b.date.localeCompare(a.date));
@@ -253,10 +286,17 @@ function ActivitySection({ activity, onAdd }: {
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium leading-snug">{a.description}</p>
-                <span className="text-xs font-mono text-muted-foreground shrink-0">{fmtDate(a.date)}</span>
+                <div className="text-right shrink-0">
+                  <span className="text-xs font-mono text-muted-foreground block">{fmtDate(a.date)}</span>
+                  {a.operator && (
+                    <span className="text-[10px] font-mono uppercase tracking-tight bg-muted px-1 py-0.5 border border-border text-muted-foreground mt-0.5 inline-block">
+                      👤 {a.operator}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                <span className="text-xs font-mono text-muted-foreground">{a.subject}</span>
+                <span className="text-xs font-mono text-muted-foreground font-semibold">{a.subject}</span>
                 {a.details && <span className="text-xs text-muted-foreground">· {a.details}</span>}
               </div>
             </div>
@@ -284,9 +324,21 @@ function ActivitySection({ activity, onAdd }: {
                 </select>
               </FormField>
             </div>
+            
+            <FormField label="Logged By (Operator Name)">
+              <input 
+                required
+                className={`${inputCls} border-primary/40 focus:border-primary`} 
+                value={form.operator} 
+                onChange={e => set("operator", e.target.value)} 
+                placeholder="e.g. John Doe, Alice Smith" 
+              />
+            </FormField>
+
             <FormField label="Subject (animal / flock name)"><input required className={inputCls} value={form.subject} onChange={e => set("subject", e.target.value)} placeholder="e.g. R-005, Layer Flock A" /></FormField>
-            <FormField label="Description"><input required className={inputCls} value={form.description} onChange={e => set("description", e.target.value)} /></FormField>
-            <FormField label="Details (optional)"><textarea className={textareaCls} rows={2} value={form.details} onChange={e => set("details", e.target.value)} /></FormField>
+            <FormField label="Description"><input required className={inputCls} value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Administered Dewormer" /></FormField>
+            <FormField label="Details (optional)"><textarea className={textareaCls} rows={2} value={form.details} onChange={e => set("details", e.target.value)} placeholder="Batch numbers, specific observations, or measurements..." /></FormField>
+            
             <div className="flex justify-end gap-2 pt-2">
               <Btn variant="outline" onClick={() => setShowModal(false)}>Cancel</Btn>
               <Btn type="submit">Save Entry</Btn>
@@ -297,7 +349,6 @@ function ActivitySection({ activity, onAdd }: {
     </div>
   );
 }
-
 // ─── Dashboard Section ─────────────────────────────────────────────────────────
 function DashboardSection({ flocks, rabbits, pigs, eggLogs, expenses, sales, activity, onNavigate }: {
   flocks: Flock[]; rabbits: RabbitRecord[]; pigs: PigRecord[];
@@ -438,22 +489,63 @@ function DashboardSection({ flocks, rabbits, pigs, eggLogs, expenses, sales, act
 }
 
 // ─── Poultry Section ──────────────────────────────────────────────────────────
-function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
+function PoultrySection({ flocks, onAdd, onDelete, onLogDeath, onUpdateFlock }: {
   flocks: Flock[]; onAdd: (f: Flock) => void; onDelete: (id: string) => void;
   onLogDeath: (flockId: string, count: number, cause: string, date: string) => void;
+  onUpdateFlock?: (f: Flock) => void; // Unlocks editing capability
 }) {
   const [showModal, setShowModal] = useState(false);
   const [deathModal, setDeathModal] = useState<Flock | null>(null);
-  const [form, setForm] = useState({ name: "", breed: "", count: "", purpose: "layers", ageWeeks: "", dateAcquired: "", notes: "" });
+  const [editModal, setEditModal] = useState<Flock | null>(null);
+  
+  const [form, setForm] = useState({ name: "", breed: "", count: "", purpose: "layers", ageWeeks: "0", dateAcquired: today(), notes: "" });
+  const [editForm, setEditForm] = useState({ id: "", name: "", breed: "", count: 0, purpose: "layers", ageWeeks: 0, dateAcquired: "", notes: "" });
   const [deathForm, setDeathForm] = useState({ count: "1", cause: "", date: today() });
+  
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
   const setD = (k: string, v: string) => setDeathForm(p => ({ ...p, [k]: v }));
 
+  // Dynamic automatic engine utility to calculate exact running weeks from calendar
+  const calculateWeeksFromDate = (dateString: string): number => {
+    if (!dateString) return 0;
+    const target = new Date(dateString);
+    const diffTime = Math.abs(new Date().getTime() - target.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.floor(diffDays / 7);
+  };
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ id: uid(), name: form.name, breed: form.breed, count: parseInt(form.count)||0, purpose: form.purpose as Flock["purpose"], ageWeeks: parseInt(form.ageWeeks)||0, dateAcquired: form.dateAcquired, notes: form.notes });
+    const autoWeeks = calculateWeeksFromDate(form.dateAcquired);
+onAdd({ 
+  id: uid(), 
+  name: form.name, 
+  breed: form.breed, 
+  count: parseInt(form.count)||0, 
+  purpose: form.purpose as Flock["purpose"], 
+  ageWeeks: autoWeeks, 
+  hatch_date: form.dateAcquired, // <--- Change 'dateAcquired' to 'hatch_date'
+  notes: form.notes 
+});
     setShowModal(false);
-    setForm({ name: "", breed: "", count: "", purpose: "layers", ageWeeks: "", dateAcquired: "", notes: "" });
+    setForm({ name: "", breed: "", count: "", purpose: "layers", ageWeeks: "0", hatch_date: today(), notes: "" });
+  };
+
+  const openEdit = (f: Flock) => {
+    setEditModal(f);
+    setEditForm({ ...f });
+  };
+
+  const submitEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onUpdateFlock) {
+      const runningWeeks = calculateWeeksFromDate(editForm.dateAcquired);
+      onUpdateFlock({
+        ...editForm,
+        ageWeeks: runningWeeks
+      });
+    }
+    setEditModal(null);
   };
 
   const submitDeath = (e: React.FormEvent) => {
@@ -492,7 +584,9 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
             </tr>
           </thead>
           <tbody>
-            {flocks.map(f => (
+            {flocks.map(f => {
+              const exactCurrentWeeks = calculateWeeksFromDate(f.dateAcquired);
+              return (
               <tr key={f.id} className="hover:bg-muted/30 transition-colors">
                 <TD><span className="font-medium">{f.name}</span></TD>
                 <TD mono>{f.breed}</TD>
@@ -500,11 +594,17 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
                 <TD>
                   <Badge label={f.purpose} color={f.purpose === "layers" ? "green" : f.purpose === "broilers" ? "amber" : "blue"} />
                 </TD>
-                <TD mono>{f.ageWeeks < 52 ? `${f.ageWeeks}wk` : `${Math.floor(f.ageWeeks/52)}yr ${f.ageWeeks%52}wk`}</TD>
+                <TD mono>{exactCurrentWeeks < 52 ? `${exactCurrentWeeks}wk` : `${Math.floor(exactCurrentWeeks/52)}yr ${exactCurrentWeeks%52}wk`}</TD>
                 <TD mono>{fmtDate(f.dateAcquired)}</TD>
                 <TD><span className="text-xs text-muted-foreground">{f.notes || "—"}</span></TD>
                 <TD>
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEdit(f)}
+                      title="Edit Flock Parameters"
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-mono border border-border hover:bg-muted transition-colors text-muted-foreground">
+                      Edit
+                    </button>
                     <button
                       onClick={() => setDeathModal(f)}
                       title="Log bird death"
@@ -517,11 +617,13 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
                   </div>
                 </TD>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
+      {/* ADD FLOCK MODAL */}
       {showModal && (
         <Modal title="Add Flock" onClose={() => setShowModal(false)}>
           <form onSubmit={submit} className="space-y-3">
@@ -540,8 +642,23 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
               </FormField>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Age (weeks)"><input type="number" min="0" className={inputCls} value={form.ageWeeks} onChange={e => set("ageWeeks", e.target.value)} /></FormField>
-              <FormField label="Date Acquired"><input type="date" className={inputCls} value={form.dateAcquired} onChange={e => set("dateAcquired", e.target.value)} /></FormField>
+              <FormField label="Date Hatched / Stocked">
+                <input 
+                  required 
+                  type="date" 
+                  className={inputCls} 
+                  value={form.dateAcquired} 
+                  onChange={e => set("dateAcquired", e.target.value)} 
+                />
+              </FormField>
+              <FormField label="Calculated Running Age">
+                <input 
+                  disabled 
+                  type="text" 
+                  className={`${inputCls} bg-muted cursor-not-allowed text-muted-foreground font-mono font-bold`} 
+                  value={`${calculateWeeksFromDate(form.dateAcquired)} Weeks Old`} 
+                />
+              </FormField>
             </div>
             <FormField label="Notes"><textarea className={textareaCls} rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></FormField>
             <div className="flex justify-end gap-2 pt-2">
@@ -552,6 +669,53 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
         </Modal>
       )}
 
+      {/* EDIT FLOCK MODAL */}
+      {editModal && (
+        <Modal title={`Edit Flock — ${editForm.name}`} onClose={() => setEditModal(null)}>
+          <form onSubmit={submitEdit} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Flock Name"><input required className={inputCls} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} /></FormField>
+              <FormField label="Breed"><input required className={inputCls} value={editForm.breed} onChange={e => setEditForm(p => ({ ...p, breed: e.target.value }))} /></FormField>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Count"><input required type="number" min="1" className={inputCls} value={editForm.count} onChange={e => setEditForm(p => ({ ...p, count: parseInt(e.target.value)||0 }))} /></FormField>
+              <FormField label="Purpose">
+                <select className={selectCls} value={editForm.purpose} onChange={e => setEditForm(p => ({ ...p, purpose: e.target.value as any }))}>
+                  <option value="layers">Layers</option>
+                  <option value="broilers">Broilers</option>
+                  <option value="dual-purpose">Dual-Purpose</option>
+                </select>
+              </FormField>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Date Hatched / Stocked">
+                <input 
+                  required 
+                  type="date" 
+                  className={inputCls} 
+                  value={editForm.dateAcquired} 
+                  onChange={e => setEditForm(p => ({ ...p, dateAcquired: e.target.value }))} 
+                />
+              </FormField>
+              <FormField label="Calculated Running Age">
+                <input 
+                  disabled 
+                  type="text" 
+                  className={`${inputCls} bg-muted cursor-not-allowed text-muted-foreground font-mono font-bold`} 
+                  value={`${calculateWeeksFromDate(editForm.dateAcquired)} Weeks Old`} 
+                />
+              </FormField>
+            </div>
+            <FormField label="Notes"><textarea className={textareaCls} rows={2} value={editForm.notes} onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))} /></FormField>
+            <div className="flex justify-end gap-2 pt-2">
+              <Btn variant="outline" onClick={() => setEditModal(null)}>Cancel</Btn>
+              <Btn type="submit">Save Changes</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* LOG DEATH MODAL */}
       {deathModal && (
         <Modal title={`Log Bird Death — ${deathModal.name}`} onClose={() => setDeathModal(null)}>
           <div className="text-sm text-muted-foreground font-mono mb-3 p-2 bg-muted border border-border">
@@ -584,19 +748,25 @@ function PoultrySection({ flocks, onAdd, onDelete, onLogDeath }: {
 }
 
 // ─── Rabbits Section ──────────────────────────────────────────────────────────
-function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAddCage, onDeleteCage, onAssignCage }: {
+function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAddCage, onDeleteCage, onAssignCage, onUpdateRabbit }: {
   rabbits: RabbitRecord[]; cages: Cage[]; onAdd: (r: RabbitRecord) => void; onDelete: (id: string) => void;
   onUpdateStatus: (id: string, status: RabbitRecord["status"], notes: string) => void;
   onAddCage: (c: Cage) => void; onDeleteCage: (id: string) => void;
   onAssignCage: (rabbitId: string, cageId: string | null) => void;
+  onUpdateRabbit?: (r: RabbitRecord) => void; // Unlocks editing capability
 }) {
   const [showModal, setShowModal] = useState(false);
   const [cageModal, setCageModal] = useState(false);
   const [statusModal, setStatusModal] = useState<RabbitRecord | null>(null);
+  const [editModal, setEditModal] = useState<RabbitRecord | null>(null);
+  
   const [statusForm, setStatusForm] = useState({ status: "active", notes: "", lastBredDate: "", expectedKindleDate: "" });
   const [form, setForm] = useState({ tagId: "", breed: "", sex: "female", dob: "", weightKg: "", status: "active", lastBredDate: "", expectedKindleDate: "", cageId: "" });
+  const [editForm, setEditForm] = useState({ id: "", tagId: "", breed: "", sex: "female", dob: "", weightKg: "", status: "active", lastBredDate: "", expectedKindleDate: "", cageId: "" });
   const [cageForm, setCageForm] = useState({ name: "", location: "", capacity: "4", notes: "" });
+
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+  const setEdit = (k: string, v: string) => setEditForm(p => ({ ...p, [k]: v }));
 
   const occupancy = useCallback((cageId: string) => rabbits.filter(r => r.cageId === cageId && r.status !== "sold" && r.status !== "deceased").length, [rabbits]);
   const overCapacity = cages.filter(c => occupancy(c.id) > c.capacity);
@@ -608,21 +778,77 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
 
   const openStatus = (r: RabbitRecord) => {
     setStatusModal(r);
-    setStatusForm({ status: r.status, notes: "", lastBredDate: r.lastBredDate, expectedKindleDate: r.expectedKindleDate });
+    setStatusForm({ status: r.status, notes: "", lastBredDate: r.lastBredDate || today(), expectedKindleDate: r.expectedKindleDate || "" });
+  };
+
+  const openEdit = (r: RabbitRecord) => {
+    setEditModal(r);
+    setEditForm({
+      id: r.id,
+      tagId: r.tagId,
+      breed: r.breed,
+      sex: r.sex,
+      dob: r.dob,
+      weightKg: r.weightKg.toString(),
+      status: r.status,
+      lastBredDate: r.lastBredDate,
+      expectedKindleDate: r.expectedKindleDate,
+      cageId: r.cageId || ""
+    });
   };
 
   const submitStatus = (e: React.FormEvent) => {
     e.preventDefault();
     if (!statusModal) return;
-    onUpdateStatus(statusModal.id, statusForm.status as RabbitRecord["status"], statusForm.notes);
+    // Core engine updates
+    if (onUpdateRabbit) {
+      onUpdateRabbit({
+        ...statusModal,
+        status: statusForm.status as RabbitRecord["status"],
+        lastBredDate: ["pregnant", "breeding"].includes(statusForm.status) ? statusForm.lastBredDate : "",
+        expectedKindleDate: statusForm.status === "pregnant" ? statusForm.expectedKindleDate : ""
+      });
+    } else {
+      onUpdateStatus(statusModal.id, statusForm.status as RabbitRecord["status"], statusForm.notes);
+    }
     setStatusModal(null);
   };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ id: uid(), tagId: form.tagId, breed: form.breed, sex: form.sex as RabbitRecord["sex"], dob: form.dob, weightKg: parseFloat(form.weightKg)||0, status: form.status as RabbitRecord["status"], lastBredDate: form.lastBredDate, expectedKindleDate: form.expectedKindleDate, cageId: form.cageId || null });
+    onAdd({ 
+      id: uid(), 
+      tagId: form.tagId, 
+      breed: form.breed, 
+      sex: form.sex as RabbitRecord["sex"], 
+      dob: form.dob, 
+      weightKg: parseFloat(form.weightKg)||0, 
+      status: form.status as RabbitRecord["status"], 
+      lastBredDate: ["pregnant", "breeding"].includes(form.status) ? form.lastBredDate : "", 
+      expectedKindleDate: form.status === "pregnant" ? form.expectedKindleDate : "", 
+      cageId: form.cageId || null 
+    });
     setShowModal(false);
     setForm({ tagId: "", breed: "", sex: "female", dob: "", weightKg: "", status: "active", lastBredDate: "", expectedKindleDate: "", cageId: "" });
+  };
+
+  const submitEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onUpdateRabbit) {
+      onUpdateRabbit({
+        id: editForm.id,
+        tagId: editForm.tagId, // Kept locked
+        breed: editForm.breed,
+        sex: editForm.sex as RabbitRecord["sex"],
+        dob: editForm.dob,
+        weightKg: parseFloat(editForm.weightKg) || 0,
+        status: editForm.status as RabbitRecord["status"],
+        lastBredDate: ["pregnant", "breeding"].includes(editForm.status) ? editForm.lastBredDate : "",
+        expectedKindleDate: editForm.status === "pregnant" ? editForm.expectedKindleDate : "",
+        cageId: editForm.cageId || null
+      });
+    }
+    setEditModal(null);
   };
 
   const submitCage = (e: React.FormEvent) => {
@@ -690,7 +916,7 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
               <tr key={r.id} className={`hover:bg-muted/30 transition-colors ${r.status === "deceased" ? "opacity-50" : ""}`}>
                 <TD><span className="font-mono font-medium">{r.tagId}</span></TD>
                 <TD>{r.breed}</TD>
-                <TD><Badge label={r.sex} color={r.sex === "female" ? "blue" : "gray"} /></TD>
+                <TD><Badge label={r.sex === "female" ? "DOE (FEMALE)" : "BUCK (MALE)"} color={r.sex === "female" ? "blue" : "gray"} /></TD>
                 <TD mono>{ageFromDob(r.dob)}</TD>
                 <TD mono>{r.weightKg.toFixed(1)} kg</TD>
                 <TD>
@@ -719,6 +945,12 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
                 <TD>
                   <div className="flex items-center gap-1">
                     <button
+                      onClick={() => openEdit(r)}
+                      title="Edit Identity Profile"
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-mono border border-border hover:bg-muted transition-colors text-muted-foreground">
+                      Edit
+                    </button>
+                    <button
                       onClick={() => openStatus(r)}
                       title="Update status"
                       className="inline-flex items-center gap-1 px-2 py-1 text-xs font-mono border border-border hover:bg-muted transition-colors text-muted-foreground">
@@ -736,6 +968,7 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
         </table>
       </div>
 
+      {/* MANAGE CAGES MODAL */}
       {cageModal && (
         <Modal title="Manage Cages" onClose={() => setCageModal(false)}>
           <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
@@ -771,71 +1004,30 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
         </Modal>
       )}
 
+      {/* UPDATE QUICK STATUS MODAL */}
       {statusModal && (
         <Modal title={`Update Status — ${statusModal.tagId}`} onClose={() => setStatusModal(null)}>
           <div className="text-sm text-muted-foreground font-mono p-2 bg-muted border border-border mb-2">
-            Current: <span className="font-semibold text-foreground">{statusModal.status}</span> · {statusModal.breed}
+            Current: <span className="font-semibold text-foreground">{statusModal.status.toUpperCase()}</span> · {statusModal.breed}
           </div>
           <form onSubmit={submitStatus} className="space-y-3">
-            <FormField label="New Status">
-              <select className={selectCls} value={statusForm.status} onChange={e => setStatusForm(p => ({ ...p, status: e.target.value }))}>
-                <option value="active">Active</option>
-                <option value="breeding">Breeding</option>
-                <option value="pregnant">Pregnant</option>
-                <option value="sold">Sold</option>
-                <option value="deceased">Deceased</option>
-              </select>
-            </FormField>
-            {(statusForm.status === "breeding" || statusForm.status === "pregnant") && (
-              <div className="grid grid-cols-2 gap-3">
-                <FormField label="Date Bred">
-                  <input type="date" className={inputCls} value={statusForm.lastBredDate} onChange={e => setStatusForm(p => ({ ...p, lastBredDate: e.target.value }))} />
-                </FormField>
-                <FormField label="Expected Kindle">
-                  <input type="date" className={inputCls} value={statusForm.expectedKindleDate} onChange={e => setStatusForm(p => ({ ...p, expectedKindleDate: e.target.value }))} />
-                </FormField>
-              </div>
-            )}
-            <FormField label="Notes / Reason">
-              <input className={inputCls} value={statusForm.notes} onChange={e => setStatusForm(p => ({ ...p, notes: e.target.value }))} placeholder={statusForm.status === "deceased" ? "e.g. illness, injury" : "optional"} />
-            </FormField>
-            {statusForm.status === "deceased" && (
-              <div className="p-2 bg-red-50 border border-red-200 text-xs font-mono text-red-700">
-                This will mark {statusModal.tagId} as deceased and log the event.
-              </div>
-            )}
-            <div className="flex justify-end gap-2 pt-2">
-              <Btn variant="outline" onClick={() => setStatusModal(null)}>Cancel</Btn>
-              <Btn
-                type="submit"
-                variant={statusForm.status === "deceased" ? "destructive" : "primary"}>
-                Save Status
-              </Btn>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {showModal && (
-        <Modal title="Add Rabbit" onClose={() => setShowModal(false)}>
-          <form onSubmit={submit} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Tag ID"><input required className={inputCls} value={form.tagId} onChange={e => set("tagId", e.target.value)} placeholder="R-009" /></FormField>
-              <FormField label="Breed"><input required className={inputCls} value={form.breed} onChange={e => set("breed", e.target.value)} /></FormField>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Sex">
-                <select className={selectCls} value={form.sex} onChange={e => set("sex", e.target.value)}>
-                  <option value="female">Female (Doe)</option>
-                  <option value="male">Male (Buck)</option>
-                </select>
-              </FormField>
-              <FormField label="Date of Birth"><input type="date" className={inputCls} value={form.dob} onChange={e => set("dob", e.target.value)} /></FormField>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Weight (kg)"><input type="number" step="0.1" min="0" className={inputCls} value={form.weightKg} onChange={e => set("weightKg", e.target.value)} /></FormField>
-              <FormField label="Status">
-                <select className={selectCls} value={form.status} onChange={e => set("status", e.target.value)}>
+              <FormField label="New Status">
+                <select 
+                  className={selectCls} 
+                  value={statusForm.status} 
+                  onChange={e => {
+                    const nextStatus = e.target.value;
+                    let bDate = statusForm.lastBredDate || today();
+                    let kDate = statusForm.expectedKindleDate;
+                    if (nextStatus === "pregnant") {
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      kDate = calcDate.toISOString().split('T')[0];
+                    }
+                    setStatusForm(p => ({ ...p, status: nextStatus, lastBredDate: bDate, expectedKindleDate: kDate }));
+                  }}
+                >
                   <option value="active">Active</option>
                   <option value="breeding">Breeding</option>
                   <option value="pregnant">Pregnant</option>
@@ -843,19 +1035,225 @@ function RabbitsSection({ rabbits, cages, onAdd, onDelete, onUpdateStatus, onAdd
                   <option value="deceased">Deceased</option>
                 </select>
               </FormField>
+              <FormField label="Cage Assigned">
+                <select 
+                  className={selectCls} 
+                  value={statusModal.cageId ?? ""} 
+                  onChange={e => onAssignCage(statusModal.id, e.target.value || null)}
+                >
+                  <option value="">— Unassigned —</option>
+                  {cages.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </FormField>
             </div>
-            <FormField label="Cage">
-              <select className={selectCls} value={form.cageId} onChange={e => set("cageId", e.target.value)}>
-                <option value="">— Unassigned —</option>
-                {cages.map(c => (
-                  <option key={c.id} value={c.id}>{c.name} ({occupancy(c.id)}/{c.capacity})</option>
-                ))}
-              </select>
+
+            {(statusForm.status === "breeding" || statusForm.status === "pregnant") && (
+              <div className="grid grid-cols-2 gap-3 p-2 border border-amber-200 bg-amber-50/50 rounded">
+                <FormField label={statusForm.status === "pregnant" ? "Date Pregnant / Crossed" : "Date Bred"}>
+                  <input 
+                    type="date" 
+                    className={inputCls} 
+                    value={statusForm.lastBredDate} 
+                    onChange={e => {
+                      const bDate = e.target.value;
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      setStatusForm(p => ({ ...p, lastBredDate: bDate, expectedKindleDate: calcDate.toISOString().split('T')[0] }));
+                    }} 
+                  />
+                </FormField>
+                <FormField label="Expected Kindle Date">
+                  <input 
+                    type="date" 
+                    className={inputCls} 
+                    value={statusForm.expectedKindleDate} 
+                    onChange={e => setStatusForm(p => ({ ...p, expectedKindleDate: e.target.value }))} 
+                  />
+                </FormField>
+              </div>
+            )}
+            
+            <FormField label="Notes / Reason">
+              <input className={inputCls} value={statusForm.notes} onChange={e => setStatusForm(p => ({ ...p, notes: e.target.value }))} placeholder={statusForm.status === "deceased" ? "e.g. illness, injury" : "optional"} />
             </FormField>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Last Bred Date"><input type="date" className={inputCls} value={form.lastBredDate} onChange={e => set("lastBredDate", e.target.value)} /></FormField>
-              <FormField label="Expected Kindle Date"><input type="date" className={inputCls} value={form.expectedKindleDate} onChange={e => set("expectedKindleDate", e.target.value)} /></FormField>
+            <div className="flex justify-end gap-2 pt-2">
+              <Btn variant="outline" onClick={() => setStatusModal(null)}>Cancel</Btn>
+              <Btn type="submit" variant={statusForm.status === "deceased" ? "destructive" : "primary"}>Save Status</Btn>
             </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* NEW: COMPLETE DATA PROFILE EDIT MODAL */}
+      {editModal && (
+        <Modal title={`Edit Profile Profile — ${editForm.tagId}`} onClose={() => setEditModal(null)}>
+          <form onSubmit={submitEdit} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Status">
+                <select 
+                  className={selectCls} 
+                  value={editForm.status} 
+                  onChange={e => {
+                    const nextStatus = e.target.value;
+                    let bDate = editForm.lastBredDate || today();
+                    let kDate = editForm.expectedKindleDate;
+                    if (nextStatus === "pregnant") {
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      kDate = calcDate.toISOString().split('T')[0];
+                    }
+                    setEditForm(p => ({ ...p, status: nextStatus, lastBredDate: bDate, expectedKindleDate: kDate }));
+                  }}
+                >
+                  <option value="active">Active</option>
+                  <option value="breeding">Breeding</option>
+                  <option value="pregnant">Pregnant</option>
+                  <option value="sold">Sold</option>
+                  <option value="deceased">Deceased</option>
+                </select>
+              </FormField>
+              <FormField label="Cage Assigned">
+                <select className={selectCls} value={editForm.cageId} onChange={e => setEdit("cageId", e.target.value)}>
+                  <option value="">— Unassigned —</option>
+                  {cages.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Date of Birth / Age Info">
+                <input required type="date" className={inputCls} value={editForm.dob} onChange={e => setEdit("dob", e.target.value)} />
+              </FormField>
+              <FormField label="Weight (kg)">
+                <input required type="number" step="0.01" min="0" className={inputCls} value={editForm.weightKg} onChange={e => setEdit("weightKg", e.target.value)} />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <FormField label="Tag ID (Locked)">
+                <input disabled className={`${inputCls} bg-muted cursor-not-allowed opacity-70`} value={editForm.tagId} />
+              </FormField>
+              <FormField label="Sex">
+                <select className={selectCls} value={editForm.sex} onChange={e => setEdit("sex", e.target.value)}>
+                  <option value="female">DOE (FEMALE)</option>
+                  <option value="male">BUCK (MALE)</option>
+                </select>
+              </FormField>
+              <FormField label="Breed">
+                <input required className={inputCls} value={editForm.breed} onChange={e => setEdit("breed", e.target.value)} />
+              </FormField>
+            </div>
+
+            {(editForm.status === "breeding" || editForm.status === "pregnant") && (
+              <div className="grid grid-cols-2 gap-3 p-2 border border-border bg-muted/20 rounded">
+                <FormField label={editForm.status === "pregnant" ? "Date Pregnant / Crossed" : "Date Bred"}>
+                  <input 
+                    type="date" 
+                    className={inputCls} 
+                    value={editForm.lastBredDate} 
+                    onChange={e => {
+                      const bDate = e.target.value;
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      setEditForm(p => ({ ...p, lastBredDate: bDate, expectedKindleDate: calcDate.toISOString().split('T')[0] }));
+                    }} 
+                  />
+                </FormField>
+                <FormField label="Expected Kindle Date">
+                  <input type="date" className={inputCls} value={editForm.expectedKindleDate} onChange={e => setEdit("expectedKindleDate", e.target.value)} />
+                </FormField>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Btn variant="outline" onClick={() => setEditModal(null)}>Cancel</Btn>
+              <Btn type="submit">Save Changes</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ADD NEW RABBIT MODAL */}
+      {showModal && (
+        <Modal title="Add Rabbit" onClose={() => setShowModal(false)}>
+          <form onSubmit={submit} className="space-y-3">
+            {/* STATUS & CAGE HOUSING FIRST */}
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Status">
+                <select 
+                  className={selectCls} 
+                  value={form.status} 
+                  onChange={e => {
+                    const nextStatus = e.target.value;
+                    let bDate = form.lastBredDate || today();
+                    let kDate = form.expectedKindleDate;
+                    if (nextStatus === "pregnant") {
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      kDate = calcDate.toISOString().split('T')[0];
+                    }
+                    setForm(p => ({ ...p, status: nextStatus, lastBredDate: bDate, expectedKindleDate: kDate }));
+                  }}
+                >
+                  <option value="active">Active</option>
+                  <option value="breeding">Breeding</option>
+                  <option value="pregnant">Pregnant</option>
+                  <option value="sold">Sold</option>
+                  <option value="deceased">Deceased</option>
+                </select>
+              </FormField>
+              <FormField label="Cage Assigned">
+                <select className={selectCls} value={form.cageId} onChange={e => set("cageId", e.target.value)}>
+                  <option value="">— Unassigned —</option>
+                  {cages.map(c => (
+                    <option key={c.id} value={c.id}>{c.name} ({occupancy(c.id)}/{c.capacity})</option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
+
+            {/* AGE (DOB) & WEIGHT SECOND */}
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Date of Birth"><input required type="date" className={inputCls} value={form.dob} onChange={e => set("dob", e.target.value)} /></FormField>
+              <FormField label="Weight (kg)"><input type="number" step="0.1" min="0" className={inputCls} value={form.weightKg} onChange={e => set("weightKg", e.target.value)} /></FormField>
+            </div>
+
+            {/* CORE CHASSIS IDENTITY TRIPLETS */}
+            <div className="grid grid-cols-3 gap-2">
+              <FormField label="Tag ID"><input required className={inputCls} value={form.tagId} onChange={e => set("tagId", e.target.value)} placeholder="R-009" /></FormField>
+              <FormField label="Sex">
+                <select className={selectCls} value={form.sex} onChange={e => set("sex", e.target.value)}>
+                  <option value="female">Female (Doe)</option>
+                  <option value="male">Male (Buck)</option>
+                </select>
+              </FormField>
+              <FormField label="Breed"><input required className={inputCls} value={form.breed} onChange={e => set("breed", e.target.value)} /></FormField>
+            </div>
+
+            {/* AUTOMATED BREEDING CONDITIONAL FLUID PANELS */}
+            {(form.status === "breeding" || form.status === "pregnant") && (
+              <div className="grid grid-cols-2 gap-3 p-2 border border-border bg-muted/20 rounded">
+                <FormField label={form.status === "pregnant" ? "Date Pregnant / Crossed" : "Date Bred"}>
+                  <input 
+                    type="date" 
+                    className={inputCls} 
+                    value={form.lastBredDate} 
+                    onChange={e => {
+                      const bDate = e.target.value;
+                      const calcDate = new Date(bDate);
+                      calcDate.setDate(calcDate.getDate() + 31);
+                      setForm(p => ({ ...p, lastBredDate: bDate, expectedKindleDate: calcDate.toISOString().split('T')[0] }));
+                    }} 
+                  />
+                </FormField>
+                <FormField label="Expected Kindle Date"><input type="date" className={inputCls} value={form.expectedKindleDate} onChange={e => set("expectedKindleDate", e.target.value)} /></FormField>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2">
               <Btn variant="outline" onClick={() => setShowModal(false)}>Cancel</Btn>
               <Btn type="submit">Save Rabbit</Btn>
