@@ -1,0 +1,12 @@
+{
+  "name": "FarmPulse — Farm Management",
+  "short_name": "FarmPulse",
+  "description": "Track poultry, rabbits, pigs, eggs, expenses, sales, vaccinations, and farm activity in one place.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#F0EAE0",
+  "theme_color": "#152D09",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

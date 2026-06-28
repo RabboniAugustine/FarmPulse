@@ -1,0 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-size: 15px;
+  --background: #f0eae0;
+  --foreground: #1b1810;
+  --card: #faf8f3;
+  --card-foreground: #1b1810;
+  --primary: #224010;
+  --primary-foreground: #f0eae0;
+  --secondary: #e4ddd2;
+  --secondary-foreground: #1b1810;
+  --muted: #e4ddd2;
+  --muted-foreground: #756b5a;
+  --accent: #c97c1a;
+  --accent-foreground: #faf8f3;
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
+  --border: rgba(27, 24, 16, 0.14);
+  --input: transparent;
+  --input-background: #ede8de;
+  --ring: #c97c1a;
+  --chart-1: #c97c1a;
+  --chart-2: #2b5219;
+  --chart-3: #5e8a3a;
+  --chart-4: #8fad68;
+  --chart-5: #e8a84c;
+  --radius: 0.1875rem;
+  --sidebar: #152d09;
+  --sidebar-foreground: rgba(200, 224, 168, 0.75);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: var(--font-size);
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", "Menlo", monospace;
+}
